@@ -114,6 +114,14 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             2>&1 | tee ../cmake-configure.log
 
+      - name: List available CMake/Ninja build targets (diagnostics)
+        run: |
+          cd efml
+          echo "--- Ninja targets (namelist) ---"
+          ninja -C build-android -t targets namelist 2>&1 | tee ../ninja-targets.log || true
+          echo "--- grep for Java/Effekseer-related targets ---"
+          grep -iE 'java|effekseer' ../ninja-targets.log || true
+
       - name: Build
         run: |
           cd efml
@@ -127,15 +135,22 @@ jobs:
           path: |
             cmake-configure.log
             cmake-build.log
+            ninja-targets.log
 
       - name: Locate produced .so
         id: locate
         run: |
           set -e
-          FOUND=$(find efml/build-android -iname "*EffekseerNativeForJava*.so" | head -n1)
+          echo "--- Ищу любой .so с 'Effekseer' в имени по всему дереву efml (без ограничения глубины) ---"
+          find efml -iname "*effekseer*.so" 2>/dev/null | tee all-effekseer-so.txt
+          FOUND=$(grep -i "EffekseerNativeForJava" all-effekseer-so.txt | head -n1 || true)
           if [ -z "$FOUND" ]; then
-            echo "Не нашли .so автоматически — покажу дерево build-android для диагностики:"
-            find efml/build-android -maxdepth 4
+            FOUND=$(head -n1 all-effekseer-so.txt || true)
+          fi
+          if [ -z "$FOUND" ]; then
+            echo "Ни одного .so с Effekseer в имени не нашлось нигде в дереве efml."
+            echo "Все .so файлы, которые вообще есть в build-android:"
+            find efml/build-android -iname "*.so" || echo "(вообще ни одного .so файла)"
             exit 1
           fi
           echo "Найдено: $FOUND"
@@ -156,4 +171,3 @@ jobs:
           path: |
             ${{ env.OUT_NAME }}
             EffekseerNativeForJava.so
-            
