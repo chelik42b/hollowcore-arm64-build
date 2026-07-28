@@ -82,6 +82,28 @@ jobs:
           cd efml/src
           sh generate_swig_wrapper.sh
 
+      - name: Strip desktop-only deps (OpenAL sound / desktop OpenGL-GLX) before Android configure
+        # EffekseerForMultiLanguages' CMake was written for desktop (Windows/Linux/Mac) and
+        # unconditionally pulls in: (1) the Dev/Cpp desktop viewer/tools tree, which needs
+        # OpenAL (EffekseerSoundAL) — not available/relevant on Android, and (2) a
+        # find_package(OpenGL) call that expects desktop GLX, not Android OpenGL ES.
+        # This step comments those out so the Android configure step doesn't fail on them.
+        # Best-effort: if the source layout changes, this may need adjusting — check the log.
+        run: |
+          set -e
+          echo "--- Ищу add_subdirectory(...Dev/Cpp...) во всех CMakeLists.txt ---"
+          grep -rlE 'add_subdirectory\([^)]*Dev/Cpp[^)]*\)' efml --include=CMakeLists.txt || true
+          grep -rlE 'add_subdirectory\([^)]*Dev/Cpp[^)]*\)' efml --include=CMakeLists.txt | \
+            xargs -r sed -i -E 's/^([[:space:]]*)(add_subdirectory\([^)]*Dev\/Cpp[^)]*\))/\1if(NOT ANDROID)\n\1  \2\n\1endif()/'
+
+          echo "--- Делаю find_package(OpenGL) необязательным на Android ---"
+          grep -rlE 'find_package\(\s*OpenGL' efml --include=CMakeLists.txt || true
+          grep -rlE 'find_package\(\s*OpenGL' efml --include=CMakeLists.txt | \
+            xargs -r sed -i -E 's/find_package\(\s*OpenGL\s+REQUIRED\s*\)/find_package(OpenGL)/g'
+
+          echo "--- Готово, показываю изменённые файлы (git diff) ---"
+          cd efml && git diff --stat || true
+
       - name: Configure CMake for Android arm64-v8a
         run: |
           cd efml
@@ -89,12 +111,22 @@ jobs:
             -DCMAKE_TOOLCHAIN_FILE=${{ steps.setup-ndk.outputs.ndk-path }}/build/cmake/android.toolchain.cmake \
             -DANDROID_ABI=${{ env.ANDROID_ABI }} \
             -DANDROID_PLATFORM=${{ env.ANDROID_PLATFORM }} \
-            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_BUILD_TYPE=Release \
+            2>&1 | tee ../cmake-configure.log
 
       - name: Build
         run: |
           cd efml
-          cmake --build build-android --config Release -j"$(nproc)"
+          cmake --build build-android --config Release -j"$(nproc)" 2>&1 | tee ../cmake-build.log
+
+      - name: Upload CMake logs (always, for debugging)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cmake-logs
+          path: |
+            cmake-configure.log
+            cmake-build.log
 
       - name: Locate produced .so
         id: locate
